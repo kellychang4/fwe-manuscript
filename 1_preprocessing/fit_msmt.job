@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+if [[ ! -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DATA_DIR="${DATA_HOME}/derivatives/qsiprep/${participant}/dwi"
+OUT_DIR="${DATA_HOME}/derivatives/qsirecon-MSMT/${participant}"
+if [[ ! -d "${OUT_DIR}" ]]; then mkdir -p "${OUT_DIR}"; fi
+FILES_DIR="/paths/to/files"
+ 
+# Run Multi-Shell Multi-Tissue (MSMT) CSD --------------------------------------
+
+fname_prefix="${participant}_space-ACPC"
+dwi_bname="${fname_prefix}_desc-preproc_dwi"
+mask_fname="${fname_prefix}_desc-brain_mask.nii.gz"
+
+fname="${fname_prefix}_model-MSMT_label-WM_param-shcoeff_dwimap.nii.gz"
+if [[ ! -f "${OUT_DIR}/${fname}" ]]; then 
+  apptainer run \
+    --bind "${DATA_DIR}:/data" \
+    --bind "${OUT_DIR}:/out" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/dipy.sif" \
+    /files/fit_msmt.py \
+    --dwi_data_file "/data/${dwi_bname}.nii.gz" \
+    --bval_file "/data/${dwi_bname}.bval" \
+    --bvec_file "/data/${dwi_bname}.bvec" \
+    --mask_file "/data/${mask_fname}" \
+    --output_prefix "/out/${fname_prefix}"
+fi

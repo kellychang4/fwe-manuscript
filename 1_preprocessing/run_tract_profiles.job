@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+if [[ ! -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DATA_DIR="${DATA_HOME}/derivatives"
+OUT_DIR="${DATA_DIR}/profiles/${participant}"
+if [[ ! -d "${OUT_DIR}" ]]; then mkdir -p "${OUT_DIR}"; fi
+FILES_DIR="/paths/to/files"
+
+# Define Volumetric Data -------------------------------------------------------
+
+dki_dir="${DATA_DIR}/qsirecon-DKI/${participant}"
+fwdti_dir="${DATA_DIR}/qsirecon-FWDTI/${participant}"
+wmh_dir="${DATA_DIR}/hypermapper/${participant}"
+
+metric_list=(
+  "/dki/${participant}_space-ACPC_model-DKI_param-AWF_dwimap.nii.gz"
+  "/dki/${participant}_space-ACPC_model-DKI_param-FA_dwimap.nii.gz"
+  "/dki/${participant}_space-ACPC_model-DKI_param-MD_dwimap.nii.gz"
+  "/dki/${participant}_space-ACPC_model-DKI_param-MK_dwimap.nii.gz"
+  "/fwdti/${participant}_space-ACPC_model-FWDTI_param-MD_dwimap.nii.gz"
+  "/fwdti/${participant}_space-ACPC_model-FWDTI_param-FWF_dwimap.nii.gz"
+  "/fwdti/${participant}_space-ACPC_model-FWDTI_param-FA_dwimap.nii.gz"
+  "/wmh/${participant}_space-diffusion_label-WMH_desc-clean_mask.nii.gz"
+)
+
+# Define pyAFQ Pipelines -------------------------------------------------------
+
+afq_list=(
+  "afq-original"
+  "afq-original_threshold"
+  "afq-original_stopmask"
+  "afq-fwe"
+  "afq-fwe_stopmask"
+  "afq-msmt"
+  "afq-msmt_stopmask"
+)
+
+# Run Profiles -----------------------------------------------------------------
+
+for pipeline in "${afq_list[@]}"; do 
+  # define current pipeline directories
+  curr_afq="${DATA_DIR}/${pipeline}/${participant}"
+  curr_ref="${curr_afq}/${participant}_odfmodel-CSD_desc-APM_dwi.nii.gz"
+
+  # define the output directory
+  curr_save="${OUT_DIR}/${pipeline}"
+  if [[ ! -d "${curr_save}" ]]; then mkdir -p "${curr_save}"; fi
+
+  # run the profiles for each file in the file list
+  for fname in "${metric_list[@]}"; do
+    save_name=$( basename "${fname}" | sed -E "s/.nii.gz/.csv/" )
+    if [[ ! -f "${curr_save}/${save_name}" ]]; then 
+      apptainer run \
+        --bind "${curr_afq}/bundles:/bundles" \
+        --bind "${dki_dir}:/dki" \
+        --bind "${fwdti_dir}:/fwdti" \
+        --bind "${wmh_dir}:/wmh" \
+        --bind "${curr_ref}:/ref.nii.gz" \
+        --bind "${curr_save}:/out" \
+        --bind "${FILES_DIR}:/files" \
+        "${APPTAINER_DIR}/dipy.sif" \
+        /files/run_tract_profiles.py \
+        --vol_fname "${fname}" \
+        --trk_dir /bundles \
+        --trk_ref /ref.nii.gz \
+        --output_csv "/out/${save_name}" 
+    fi
+  done
+done
+
+
+
+

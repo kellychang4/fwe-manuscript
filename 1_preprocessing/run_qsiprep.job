@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+if [[ ! -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DATA_DIR="${DATA_HOME}/data"
+OUT_DIR="${DATA_HOME}/derivatives/qsiprep"
+if [[ ! -d "${OUT_DIR}" ]]; then mkdir "${OUT_DIR}"; fi
+WORK_DIR="${DATA_HOME}/work"
+if [[ ! -d "${WORK_DIR}" ]]; then mkdir "${WORK_DIR}"; fi
+FILES_DIR="/paths/to/files"
+
+# Run QSIPrep ------------------------------------------------------------------
+
+if [[ ! -f "${OUT_DIR}/${participant}.html" ]]; then
+  apptainer run \
+    --bind "${DATA_DIR}:/data" \
+    --bind "${OUT_DIR}:/out" \
+    --bind "${WORK_DIR}:/work" \
+    --bind "${FILES_DIR}:/files" \
+    --nv \
+    "${APPTAINER_DIR}/qsiprep.sif" \
+    /data /out participant \
+    --participant-label "${participant}" \
+    --unringing-method mrdegibbs \
+    --anatomical-template MNI152NLin2009cAsym \
+    --output-resolution 2.2 \
+    --eddy-config /files/eddy_config.json \
+    --fs-license-file /files/fs_license.txt \
+    --work-dir /work \
+    -v
+fi

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+output_dir="${2}"
+
+if [[ ! -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DERIVATIVES_DIR="${DATA_HOME}/derivatives"
+DATA_DIR="${DERIVATIVES_DIR}/qsiprep/${participant}/dwi"
+OUT_DIR="${DERIVATIVES_DIR}/${output_dir}/${participant}"
+if [[ ! -d "${OUT_DIR}" ]]; then mkdir -p "${OUT_DIR}"; fi
+FILES_DIR="/path/to/python/script"
+
+# Run pyAFQ (Original) ---------------------------------------------------------
+
+case "${output_dir}" in 
+  afq-original) 
+    fname="${participant}_coordsys-RASMM_trkmethod-probCSD_recogmethod-AFQ_desc-profiles_dwi.csv"
+    if [[ ! -f "${OUT_DIR}/${fname}" ]]; then 
+      apptainer run \
+        --bind "${DATA_DIR}:/data" \
+        --bind "${OUT_DIR}:/out" \
+        --bind "${FILES_DIR}:/files" \
+        "${APPTAINER_DIR}/pyafq.sif" \
+        /files/run_afq_original.py \
+        --dwi_data_file "/data/${participant}_space-ACPC_desc-preproc_dwi.nii.gz" \
+        --bval_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bval" \
+        --bvec_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bvec" \
+        --mask_file "/data/${participant}_space-ACPC_desc-brain_mask.nii.gz" \
+        --output_dir /out
+    fi ;;
+  afq-original_threshold) 
+    fname="${participant}_coordsys-RASMM_trkmethod-probCSD_recogmethod-AFQ_desc-profiles_dwi.csv"
+    if [[ ! -f "${OUT_DIR}/${fname}" ]]; then 
+      apptainer run \
+        --bind "${DATA_DIR}:/data" \
+        --bind "${OUT_DIR}:/out" \
+        --bind "${FILES_DIR}:/files" \
+        "${APPTAINER_DIR}/pyafq.sif" \
+        /files/run_afq_original.py \
+        --dwi_data_file "/data/${participant}_space-ACPC_desc-preproc_dwi.nii.gz" \
+        --bval_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bval" \
+        --bvec_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bvec" \
+        --mask_file "/data/${participant}_space-ACPC_desc-brain_mask.nii.gz" \
+        --output_dir /out \
+        --stop_threshold 0.1 
+    fi ;;
+  afq-original_stopmask)
+    fname="${participant}_coordsys-RASMM_trkmethod-probCSD_recogmethod-AFQ_desc-profiles_dwi.csv"
+    if [[ ! -f "${OUT_DIR}/${fname}" ]]; then 
+      apptainer run \
+        --bind "${DATA_DIR}:/data" \
+        --bind "${OUT_DIR}:/out" \
+        --bind "${FILES_DIR}:/files" \
+        "${APPTAINER_DIR}/pyafq.sif" \
+        /files/run_afq_original.py \
+        --dwi_data_file "/data/${participant}_space-ACPC_desc-preproc_dwi.nii.gz" \
+        --bval_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bval" \
+        --bvec_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bvec" \
+        --mask_file "/data/${participant}_space-ACPC_desc-brain_mask.nii.gz" \
+        --output_dir /out \
+        --stop_mask_file "/data/${participant}_space-ACPC_label-WM_mask.nii.gz"
+    fi ;;
+  *) # otherwise...
+    echo "[ERROR] Unrecognized pipeline (${output_dir}) requested."
+    exit 1
+esac
