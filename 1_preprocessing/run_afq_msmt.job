@@ -6,7 +6,7 @@
 participant="${1}"
 output_dir="${2}"
 
-if [[ ! -z "${participant}" ]]; then
+if [[ -z "${participant}" ]]; then
   echo "[ERROR] Participant ID required."
   exit 1
 fi

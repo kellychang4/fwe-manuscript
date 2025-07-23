@@ -4,7 +4,7 @@
 # module load apptainer
 
 participant="${1}"
-if [[ ! -z "${participant}" ]]; then
+if [[ -z "${participant}" ]]; then
   echo "[ERROR] Participant ID required."
   exit 1
 fi
