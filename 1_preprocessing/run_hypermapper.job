@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+if [[ -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DATA_DIR="${DATA_HOME}/data"
+OUT_DIR="${DATA_HOME}/derivatives"
+WORK_DIR="${DATA_HOME}/work/${participant}"
+if [[ ! -d "${WORK_DIR}" ]]; then mkdir -p "${WORK_DIR}"; fi
+FILES_DIR="/paths/to/files"
+
+ANAT_DIR="${DATA_DIR}/${participant}/anat"
+QSIPREP_DIR="${OUT_DIR}/qsiprep/${participant}/anat"
+SAVE_DIR="${OUT_DIR}/hypermapper/${participant}"
+if [[ ! -d "${SAVE_DIR}" ]]; then mkdir -p "${SAVE_DIR}"; fi
+
+# Copy Files to Working Directory ----------------------------------------------
+
+rsync -au "${ANAT_DIR}/${participant}_T2w.nii.gz" "${WORK_DIR}/t2w.nii.gz"
+
+rsync -au "${ANAT_DIR}/${participant}_FLAIR.nii.gz" "${WORK_DIR}/flair.nii.gz"
+
+rsync -au \
+  "${QSIPREP_DIR}/${participant}_space-ACPC_desc-aseg_dseg.nii.gz" \
+  "${WORK_DIR}/aseg.nii.gz"
+
+rsync -au \
+  "${QSIPREP_DIR}/${participant}_space-ACPC_desc-preproc_T1w.nii.gz" \
+  "${WORK_DIR}/t1w_coreg.nii.gz"
+
+rsync -au \
+  "${QSIPREP_DIR}/${participant}_space-ACPC_desc-brain_mask.nii.gz" \
+  "${WORK_DIR}/mask_coreg.nii.gz"
+
+rsync -au \
+  "${QSIPREP_DIR}/${participant}_from-ACPC_to-MNI152NLin2009cAsym_mode-image_xfm.h5" \
+  "${WORK_DIR}/acpc_to_mni.h5"
+
+rsync -au \
+  "${QSIPREP_DIR}/${participant}_from-MNI152NLin2009cAsym_to-ACPC_mode-image_xfm.h5" \
+  "${WORK_DIR}/mni_to_acpc.h5"
+   
+# SynthStrip and Coregister FLAIR and T2w Images -------------------------------
+
+for image in "flair" "t2w"; do 
+  fname="${image}_mask.nii.gz" 
+  if [[ ! -f "${WORK_DIR}/${fname}" ]]; then
+    apptainer run \
+      --bind "${WORK_DIR}:/work" \
+      "${APPTAINER_DIR}/freesurfer.sif" \
+      mri_synthstrip \
+      --image "/work/${image}.nii.gz" \
+      --mask "/work/${fname}" 
+  fi
+
+  fname="${image}_coreg.nii.gz" 
+  if [[ ! -f "${WORK_DIR}/${fname}" ]]; then
+    apptainer run \
+      --bind "${WORK_DIR}:/work" \
+      --bind "${FILES_DIR}:/files" \
+      "${APPTAINER_DIR}/antspyx.sif" \
+      /files/run_hypermapper.py coregister_images \
+      --moving_image "/work/${image}.nii.gz" \
+      --moving_mask "/work/${image}_mask.nii.gz" \
+      --target_image /work/t1w_coreg.nii.gz \
+      --target_mask /work/mask_coreg.nii.gz \
+      --output_file "/work/${fname}" 
+  fi
+done
+
+# Transform T1w, T2w, FLAIR, and Mask to MNI Space -----------------------------
+
+for image in "t1w" "t2w" "flair" "mask"; do 
+  interpolation="linear" # default for t1w, t2w, and flair images
+  if [[ "${image}" == "mask" ]]; then interpolation="nearestneighbor"; fi
+  if [[ ! -f "${WORK_DIR}/mni_${image}.nii.gz" ]]; then
+    apptainer run \
+      --bind "${WORK_DIR}:/work" \
+      --bind "${FILES_DIR}:/files" \
+      "${APPTAINER_DIR}/antspyx.sif" \
+      /files/run_hypermapper.py apply_transform \
+      --image_file "/work/${image}_coreg.nii.gz" \
+      --transform_file /work/acpc_to_mni.h5 \
+      --output_file "/work/mni_${image}.nii.gz" \
+      --interpolation "${interpolation}"
+  fi
+done
+
+# Run HyperMapp3r --------------------------------------------------------------
+
+fname="wmh_seg_qc.png"
+if [[ ! -f "${WORK_DIR}/qc/${fname}" ]]; then
+  apptainer run \
+    --bind "${WORK_DIR}:/work" \
+    "${APPTAINER_DIR}/hypermapper.sif" \
+    seg_wmh \
+    --flair /work/mni_flair.nii.gz \
+    --t1w /work/mni_t1w.nii.gz \
+    --t2w /work/mni_t2w.nii.gz \
+    --mask /work/mni_mask.nii.gz \
+    --ign_ort \
+    --force
+fi
+
+# Transform T2w, FLAIR, and Probability Segmentation to Participant Space ------
+
+rsync -au "${WORK_DIR}/work_wmh_prob.nii.gz" "${WORK_DIR}/mni_probseg.nii.gz"
+for image in "t2w" "flair" "probseg"; do 
+  fname="${image}_out.nii.gz" 
+  if [[ ! -f "${WORK_DIR}/${fname}" ]]; then
+    apptainer run \
+      --bind "${WORK_DIR}:/work" \
+      --bind "${FILES_DIR}:/files" \
+      "${APPTAINER_DIR}/antspyx.sif" \
+      /files/run_hypermapper.py apply_transform \
+      --image_file "/work/mni_${image}.nii.gz" \
+      --transform_file /work/mni_to_acpc.h5 \
+      --output_file "/work/${fname}" \
+      --interpolation linear
+  fi
+done
+
+# Discretize White Matter Hyperintensity Probabilitistic Segmentation ----------
+
+fname="dseg_out.nii.gz" 
+if [[ ! -f "${WORK_DIR}/${fname}" ]]; then
+  apptainer run \
+    --bind "${WORK_DIR}:/work" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/antspyx.sif" \
+    /files/run_hypermapper.py probseg_to_dseg \
+    --probseg_file /work/probseg_out.nii.gz \
+    --output_file "/work/${fname}" \
+    --probseg_threshold 0.5
+fi
+
+# Create Cleaned White Matter Mask ---------------------------------------------
+
+if [[ ! -f "${WORK_DIR}/ventricle_clean.nii.gz" ]]; then
+  apptainer run \
+    --bind "${WORK_DIR}:/work" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/antspyx.sif" \
+    /files/run_hypermapper.py clean_wm \
+    --aseg_file /work/aseg.nii.gz \
+    --output_file /work/wm_clean.nii.gz \
+    --radius 1
+fi
+
+# Clean White Matter Hyperintensity Segmentations ------------------------------
+
+fname="dseg_clean.nii.gz"
+if [[ ! -f "${WORK_DIR}/${fname}" ]]; then
+  apptainer run \
+    --bind "${WORK_DIR}:/work" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/antspyx.sif" \
+    /files/run_hypermapper.py clean_wmh \
+    --wmh_dseg_file /work/dseg_out.nii.gz \
+    --wm_file /work/wm_clean.nii.gz \
+    --ventricle_file /work/ventricle_clean.nii.gz \
+    --output_file "/work/${fname}"
+fi
+
+# Normalize FLAIR Image based on participant White Matter --------------------------
+
+fname="flair_norm.nii.gz"
+if [[ ! -f "${WORK_DIR}/${fname}" ]]; then
+  apptainer run \
+    --bind "${WORK_DIR}:/work" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/antspyx.sif" \
+    /files/run_hypermapper.py mask_norm \
+    --input_file /work/flair_out.nii.gz \
+    --mask_file /work/wm_clean.nii.gz \
+    --output_file "/work/${fname}"
+fi
+
+# Copy Output Files to Derivatives Directory -----------------------------------
+
+rsync -au \
+  "${WORK_DIR}/t2w_out.nii.gz" \
+  "${SAVE_DIR}/${participant}_space-ACPC_T2w.nii.gz" 
+
+rsync -au \
+  "${WORK_DIR}/flair_out.nii.gz" \
+  "${SAVE_DIR}/${participant}_space-ACPC_FLAIR.nii.gz" 
+
+rsync -au \
+  "${WORK_DIR}/flair_norm.nii.gz" \
+  "${SAVE_DIR}/${participant}_space-ACPC_desc-preproc_FLAIR.nii.gz"
+
+rsync -au \
+  "${WORK_DIR}/probseg_out.nii.gz" \
+  "${SAVE_DIR}/${participant}_space-ACPC_label-WMH_probseg.nii.gz" 
+
+rsync -au \
+  "${WORK_DIR}/dseg_out.nii.gz" \
+  "${SAVE_DIR}/${participant}_space-ACPC_label-WMH_dseg.nii.gz" 
+
+rsync -au \
+  "${WORK_DIR}/dseg_clean.nii.gz" \
+  "${SAVE_DIR}/${participant}_space-ACPC_label-WMH_desc-clean_dseg.nii.gz"
+
+rsync -au "${WORK_DIR}/qc/wmh_seg_qc.png" "${SAVE_DIR}/../${participant}.png" 
