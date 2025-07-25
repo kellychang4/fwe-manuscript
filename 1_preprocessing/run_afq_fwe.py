@@ -21,7 +21,7 @@ def estimate_csd_response(dwi_data_file, bval_file, bvec_file):
 
 
 def main(fwe_data_file, bval_file, bvec_file, mask_file, csd_response, 
-         output_dir, stop_mask_file = None):
+         output_dir, stop_mask_file = None, stop_threshold = 0.2):
   # Define bundles dictionary
   bundles = abd.default18_bd() + abd.callosal_bd()
 
@@ -31,12 +31,14 @@ def main(fwe_data_file, bval_file, bvec_file, mask_file, csd_response,
   # Define tracking parameters
   tracking_params = {
     "n_seeds": 2, # n_seeds per dim, [2 2 2] = 8 seeds per voxel
+    "stop_threshold": stop_threshold,
     "trx": True
   }
 
   # If stop mask provided...
   if stop_mask_file: # add stop mask to tracking_params
     tracking_params["stop_mask"] = ImageFile(path = stop_mask_file)
+    del tracking_params["stop_threshold"] # delete stop threshold
 
   # define ParticipantAFQ object
   myafq = ParticipantAFQ(
@@ -64,6 +66,7 @@ if __name__ == "__main__":
   parser.add_argument("--mask_file", type = str)
   parser.add_argument("--output_dir", type = str)
   parser.add_argument("--stop_mask_file", type = str, default = None)
+  parser.add_argument("--stop_threshold", type = float, default = 0.2)
   args = parser.parse_args()
 
   csd_response = estimate_csd_response(
@@ -79,5 +82,6 @@ if __name__ == "__main__":
     mask_file      = args.mask_file,
     csd_response   = csd_response,  
     output_dir     = args.output_dir, 
-    stop_mask_file = args.stop_mask_file
+    stop_mask_file = args.stop_mask_file, 
+    stop_threshold = args.stop_threshold
   )

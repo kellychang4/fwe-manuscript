@@ -23,6 +23,7 @@ def main(dwi_data_file, bval_file, bvec_file, mask_file, output_dir,
   # If stop mask provided...
   if stop_mask_file: # add stop mask to tracking_params
     tracking_params["stop_mask"] = ImageFile(path = stop_mask_file)
+    del tracking_params["stop_threshold"] # delete stop threshold
 
   # define ParticipantAFQ object
   myafq = ParticipantAFQ(

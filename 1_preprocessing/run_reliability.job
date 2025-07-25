@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+if [[ -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DATA_DIR="${DATA_HOME}/derivatives/qsiprep/${participant}/dwi"
+OUT_DIR="${DATA_HOME}/derivatives/reliability/${participant}"
+if [[ ! -d "${OUT_DIR}" ]]; then mkdir -p "${OUT_DIR}"; fi
+FILES_DIR="/paths/to/files"
+
+AFQ_DIR="${HOME}/AFQ_data"
+TEMPLATEFLOW_DIR="${HOME}/templateflow"
+ 
+# Define Mask Files ------------------------------------------------------------
+
+mask_file="${participant}_space-ACPC_desc-brain_mask.nii.gz"
+wmmask_file="${participant}_space-ACPC_label-WM_mask.nii.gz"
+
+# Split the Diffusion Dataset --------------------------------------------------
+
+fname="${participant}_space-ACPC_desc-fwe_split-2_dwi.nii.gz"
+if [[ ! -f "${OUT_DIR}/split-2/data/${fname}" ]]; then
+  apptainer run \
+    --bind "${DATA_DIR}:/data" \
+    --bind "${OUT_DIR}:/out" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/dipy.sif" \
+    /files/run_reliability.py split_dwi \
+    --dwi_data_file "/data/${participant}_space-ACPC_desc-preproc_dwi.nii.gz" \
+    --fwe_data_file "/data/${participant}_space-ACPC_desc-fwe_dwi.nii.gz" \
+    --bval_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bval" \
+    --bvec_file "/data/${participant}_space-ACPC_desc-preproc_dwi.bvec" \
+    --output_dir /out
+fi
+
+# Estimate CSD model on Split Dataset ------------------------------------------
+
+for split in 1 2; do 
+  # define the current split directory
+  curr_split="${OUT_DIR}/split-${split}"
+
+  # define the split dataset files
+  dwi_data_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.nii.gz"
+  fwe_data_file="${participant}_space-ACPC_desc-fwe_split-${split}_dwi.nii.gz"
+  bval_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.bval"
+  bvec_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.bvec"
+
+  # define the output directory
+  curr_save="${curr_split}/qsirecon-CSD"
+  if [[ ! -d "${curr_save}" ]]; then mkdir -p "${curr_save}"; fi
+
+  fname="${participant}_space-ACPC_desc-fwe_split-${split}_model-CSD_param-fodf_dwimap.nii.gz"
+  if [[ ! -f "${curr_save}/${fname}" ]]; then
+    apptainer run \
+      --bind "${curr_split}/data:/data" \
+      --bind "${DATA_DIR}:/mask" \
+      --bind "${curr_save}:/out" \
+      --bind "${FILES_DIR}:/files" \
+      "${APPTAINER_DIR}/dipy.sif" \
+      /files/run_reliability.py estimate_csd \
+      --dwi_data_file "/data/${dwi_data_file}" \
+      --fwe_data_file "/data/${fwe_data_file}" \
+      --bval_file "/data/${bval_file}" \
+      --bvec_file "/data/${bvec_file}" \
+      --mask_file "/mask/${mask_file}" \
+      --output_dir /out
+  fi
+done
+
+# Estimate MSMT ----------------------------------------------------------------
+
+for split in 1 2; do 
+  # define the current split directory
+  curr_split="${OUT_DIR}/split-${split}"
+
+  # define the split dataset files
+  dwi_data_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.nii.gz"
+  bval_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.bval"
+  bvec_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.bvec"
+
+  # define the output directory
+  curr_save="${curr_split}/qsirecon-MSMT"
+  if [[ ! -d "${curr_save}" ]]; then mkdir -p "${curr_save}"; fi
+
+  fname_prefix="${dwi_data_file%_dwi.nii.gz}"
+  fname="${fname_prefix}_desc-original_split-${split}_model-MSMT_label-WM_param-shcoeff_dwimap.nii.gz"
+  if [[ ! -f "${curr_save}/${fname}" ]]; then 
+    apptainer run \
+      --bind "${curr_split}/data:/data" \
+      --bind "${DATA_DIR}:/mask" \
+      --bind "${curr_save}:/out" \
+      --bind "${FILES_DIR}:/files" \
+      "${APPTAINER_DIR}/dipy.sif" \
+      /files/run_msmt.py \
+      --dwi_data_file "/data/${dwi_data_file}" \
+      --bval_file "/data/${bval_file}" \
+      --bvec_file "/data/${bvec_file}" \
+      --mask_file "/mask/${mask_file}" \
+      --output_prefix "/out/${fname_prefix}"
+  fi
+done
+
+# Calculate Correlation^2 Maps -------------------------------------------------
+
+for pipeline in "original" "fwe" "msmt"; do 
+  case "${pipeline}" in
+    original|fwe)
+      model_dir="qsirecon-CSD"
+      odf_file1="${participant}_space-ACPC_desc-${pipeline}_split-1_model-CSD_param-fodf_dwimap.nii.gz"  
+      odf_file2="${participant}_space-ACPC_desc-${pipeline}_split-2_model-CSD_param-fodf_dwimap.nii.gz" 
+      fname="${participant}_space-ACPC_desc-${pipeline}_model-CSD_param-corr2_dwimap.nii.gz" ;;
+    msmt) 
+      model_dir="qsirecon-MSMT" 
+      odf_file1="${participant}_space-ACPC_desc-original_split-1_model-MSMT_param-fodf_dwimap.nii.gz"  
+      odf_file2="${participant}_space-ACPC_desc-original_split-2_model-MSMT_param-fodf_dwimap.nii.gz" 
+      fname="${participant}_space-ACPC_desc-MSMT_label-WM_param-corr2_dwimap.nii.gz" ;;
+  esac
+
+  if [[ ! -f "${OUT_DIR}/${fname}" ]]; then
+    apptainer run \
+      --bind "${OUT_DIR}/split-1/${model_dir}:/split-1" \
+      --bind "${OUT_DIR}/split-2/${model_dir}:/split-2" \
+      --bind "${DATA_DIR}:/mask" \
+      --bind "${OUT_DIR}:/out" \
+      --bind "${FILES_DIR}:/files" \
+      "${APPTAINER_DIR}/dipy.sif" \
+      /files/run_reliability.py calc_corr2 \
+      --odf_file1 "/split-1/${odf_file1}" \
+      --odf_file2 "/split-2/${odf_file2}" \
+      --mask_file "/mask/${mask_file}" \
+      --output_file "/out/${fname}" 
+  fi
+done
+
+# Run pyAFQ Pipelines ----------------------------------------------------------
+
+pipeline_list=(
+  "afq-original"
+  "afq-original_threshold"
+  "afq-original_stopmask"
+  "afq-fwe"
+  "afq-fwe_stopmask"
+  "afq-msmt"
+  "afq-msmt_stopmask"
+)
+
+for pipeline in "${pipeline_list[@]}"; do # for each pipeline
+  for split in 1 2; do # for each split
+    # define the current split directory
+    curr_split="${OUT_DIR}/split-${split}"
+
+    # define the split dataset files
+    dwi_data_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.nii.gz"
+    fwe_data_file="${participant}_space-ACPC_desc-fwe_split-${split}_dwi.nii.gz"
+    bval_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.bval"
+    bvec_file="${participant}_space-ACPC_desc-original_split-${split}_dwi.bvec"
+    fodf_file="${participant}_space-ACPC_desc-original_split-${split}_model-MSMT_label-WM_param-shcoeff_dwimap.nii.gz"
+
+    # define the output directory
+    curr_save="${curr_split}/${pipeline}" 
+    if [[ ! -d "${curr_save}" ]]; then mkdir -p "${curr_save}"; fi
+
+    # define pipeline specific parameter 
+    case "${pipeline}" in 
+      afq-*_threshold)
+        stop_threshold="0.1" ;;
+      afq-*_stopmask)
+        stop_mask_file="/mask/${wmmask_file}" ;;
+      *)
+        stop_mask_file="None"
+        stop_threshold="0.2" ;;
+    esac
+    
+    fname="${participant}_split-${split}_coordsys-RASMM_trkmethod-probCSD_recogmethod-AFQ_desc-profiles_dwi.csv"
+    if [[ ! -f "${curr_save}/${fname}" ]]; then 
+      # print progress (if running pyafq)
+      echo "Starting ${pipeline} on split-${split}"
+
+      case "${pipeline}" in 
+        afq-original*)
+          apptainer run \
+            --bind "${curr_split}/data:/data" \
+            --bind "${DATA_DIR}:/mask" \
+            --bind "${curr_save}:/out" \
+            --bind "${FILES_DIR}:/files" \
+            --bind "${AFQ_DIR}:/home/AFQ_data" \
+            --bind "${TEMPLATEFLOW_DIR}:/home/.cache/templateflow" \
+            "${APPTAINER_DIR}/pyafq.sif" \
+            "/files/run_afq_original.py" \
+            --dwi_data_file "/data/${dwi_data_file}" \
+            --bval_file "/data/${bval_file}" \
+            --bvec_file "/data/${bvec_file}" \
+            --mask_file "/mask/${mask_file}" \
+            --output_dir /out \
+            --stop_mask_file "${stop_mask_file}" \
+            --stop_threshold "${stop_threshold}" ;;
+        afq-fwe*)
+          apptainer run \
+            --bind "${curr_split}/data:/data" \
+            --bind "${DATA_DIR}:/mask" \
+            --bind "${curr_save}:/out" \
+            --bind "${FILES_DIR}:/files" \
+            --bind "${AFQ_DIR}:/home/AFQ_data" \
+            --bind "${TEMPLATEFLOW_DIR}:/home/.cache/templateflow" \
+            "${APPTAINER_DIR}/pyafq.sif" \
+            "/files/run_afq_fwe.py" \
+            --dwi_data_file "/data/${dwi_data_file}" \
+            --fwe_data_file "/data/${fwe_data_file}" \
+            --bval_file "/data/${bval_file}" \
+            --bvec_file "/data/${bvec_file}" \
+            --mask_file "/mask/${mask_file}" \
+            --output_dir /out \
+            --stop_mask_file "${stop_mask_file}" \
+            --stop_threshold "${stop_threshold}" ;;
+        afq-msmt*)
+          apptainer run \
+            --bind "${curr_split}/data:/data" \
+            --bind "${DATA_DIR}:/mask" \
+            --bind "${curr_save}:/out" \
+            --bind "${FILES_DIR}:/files" \
+            --bind "${AFQ_DIR}:/home/AFQ_data" \
+            --bind "${TEMPLATEFLOW_DIR}:/home/.cache/templateflow" \
+            "${APPTAINER_DIR}/pyafq.sif" \
+            "/files/run_afq_msmt.py" \
+            --dwi_data_file "/data/${dwi_data_file}" \
+            --bval_file "/data/${bval_file}" \
+            --bvec_file "/data/${bvec_file}" \
+            --mask_file "/mask/${mask_file}" \
+            --fodf_file "/fodf/${fodf_file}" \
+            --output_dir /out \
+            --stop_mask_file "${stop_mask_file}" \
+            --stop_threshold "${stop_threshold}" 
+      esac
+    fi   
+  done
+done
