@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+#SBATCH configuration if using server
+# module load apptainer
+
+participant="${1}"
+if [[ -z "${participant}" ]]; then
+  echo "[ERROR] Participant ID required."
+  exit 1
+fi
+
+# Directories ------------------------------------------------------------------
+
+APPTAINER_DIR="/path/to/apptainer/files"
+DATA_HOME="/paths/to/dataset"
+DERIVATIVES_DIR="${DATA_HOME}/derivatives"
+FS_DIR="${DERIVATIVES_DIR}/freesurfer/${participant}"
+DATA_DIR="${DERIVATIVES_DIR}/qsiprep/${participant}"
+MODEL_DIR="${DERIVATIVES_DIR}/qsirecon-FWDTI/${participant}"
+FILES_DIR="/paths/to/files"
+
+# Run QSIPrep White Matter Mask ------------------------------------------------
+
+fname="${participant}_space-ACPC_label-WM_mask.nii.gz"
+if [[ ! -f "${DATA_DIR}/dwi/${fname}" ]]; then
+  apptainer run \
+    --bind "${DATA_DIR}:/data" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/antspyx.sif" \
+    /files/prepare_afq.py qsiprep_wmmask \
+    --dseg_file "/data/anat/${participant}_space-ACPC_dseg.nii.gz" \
+    --reference_file "/data/dwi/${participant}_space-ACPC_dwiref.nii.gz" \
+    --output_file "/data/dwi/${fname}"
+fi
+
+# Run Free-Water Elimination ---------------------------------------------------
+
+bname="${participant}_space-ACPC_desc-preproc_dwi"
+fname="${bname/preproc/fwe}" # fwe = free-water elimination
+if [[ ! -f "${DATA_DIR}/dwi/${fname}.nii.gz" ]]; then 
+  apptainer run \
+    --bind "${DATA_DIR}/dwi:/data" \
+    --bind "${MODEL_DIR}:/model" \
+    --bind "${FILES_DIR}:/files" \
+    "${APPTAINER_DIR}/antspyx.sif" \
+    /files/prepare_afq.py fwe \
+    --dwi_data_file "/data/${bname}.nii.gz" \
+    --bvals_file "/data/${bname}.bval" \
+    --mask_file "/data/${bname/preproc_dwi/brain_mask}.nii.gz" \
+    --fwf_file "/model/${participant}_space-ACPC_model-FWDTI_param-FWF_dwimap.nii.gz" \
+    --output_file "/data/${fname}.nii.gz" 
+fi
