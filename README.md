@@ -5,7 +5,8 @@ This repository contains the scripts used to preprocess, analyze, and visualize 
 Chang, K., Burke, L., LaPiana, N., Howlett, B., Hunt, D., Dezelar, M., Andre, J. B., Curl, P., Ralston, J. D., Rokem, A., & Mac Donald, C. L. (2024). Free water elimination tractometry for aging brains. bioRxiv.
 [https://doi.org/10.1101/2024.11.10.622861](https://doi.org/10.1101/2024.11.10.622861)
 
-> [!NOTE] All scripts have been edited to remove participant identifiers and local/server path information.
+> [!NOTE]
+> All scripts have been edited to remove participant identifiers and local/server path information.
 
 ## Repository Organziation
 
