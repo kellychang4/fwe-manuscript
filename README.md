@@ -1,4 +1,3 @@
-
 # FWE Manuscript
 
 This repository contains the scripts used to preprocess, analyze, and visualize the data found in: 
@@ -6,13 +5,13 @@ This repository contains the scripts used to preprocess, analyze, and visualize 
 Chang, K., Burke, L., LaPiana, N., Howlett, B., Hunt, D., Dezelar, M., Andre, J. B., Curl, P., Ralston, J. D., Rokem, A., & Mac Donald, C. L. (2024). Free water elimination tractometry for aging brains. bioRxiv.
 [https://doi.org/10.1101/2024.11.10.622861](https://doi.org/10.1101/2024.11.10.622861)
 
-[!NOTE] All scripts have been edited to remove participant identifiers and local/server path information.
+> [!NOTE] All scripts have been edited to remove participant identifiers and local/server path information.
 
 ## Repository Organziation
 
 The repository is organized into the following subdirectories, ordered generally by the oprder in which the processing pipeline occured.
 
-- [`1_preprocess/`](#1_preprocess)
+- [`1_preprocessing/`](#1_preprocessing)
 
   This directory contains scripts used for preprocessing. Scripts were considered as preprocessing if they primarily interacted with the raw datasets.
 
@@ -30,7 +29,7 @@ The repository is organized into the following subdirectories, ordered generally
 
 ---
 
-### `1_preprocess/`
+### `1_preprocessing/`
 
 Preprocessing was performed on a high-performance computing (HPC) server managed by a [Slurm](https://slurm.schedmd.com/overview.html) workload scheduler. Each preprocessing step consisted of a paired Python script (`.py`) and job script (`.job`).
 
